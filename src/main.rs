@@ -1,44 +1,34 @@
-use clap::Parser;
+use self::args::Args;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{prelude::CrosstermBackend, Frame, Terminal};
-use std::{io::stdout, thread};
+use ratatui::{
+    prelude::{Constraint, CrosstermBackend, Direction, Layout},
+    Frame, Terminal,
+};
+use state::State;
+use std::{io::stdout, sync::Arc};
 
+mod args;
 mod bench;
-
-#[derive(Debug, Parser)]
-struct Args {
-    /// Thread count [default: CPU core count]
-    #[arg(short, long)]
-    threads: Option<usize>,
-
-    /// Connection count [default: Thread count x20]
-    #[arg(short, long)]
-    connections: Option<usize>,
-
-    /// Benchmark duration in seconds
-    #[arg(short, long)]
-    duration: u64,
-
-    /// Target URL
-    target: String,
-}
+mod state;
+mod ui;
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    let state = Arc::new(State::new(&args));
+
+    bench::start(args, state.clone())?;
 
     enable_raw_mode()?;
     execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
 
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    thread::spawn(|| bench::start(args));
-
     loop {
-        terminal.draw(ui)?;
+        terminal.draw(|f| ui(f, &state))?;
 
         if handle_events()? {
             break;
@@ -51,7 +41,21 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn ui(_frame: &mut Frame) {}
+fn ui(frame: &mut Frame, state: &Arc<State>) {
+    let areas = Layout::new(
+        Direction::Vertical,
+        [
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(3),
+        ],
+    )
+    .split(frame.size());
+
+    ui::metrics::render(frame, state, areas[0]);
+    ui::output::render(frame, state, areas[1]);
+    ui::progress::render(frame, state, areas[2]);
+}
 
 fn handle_events() -> std::io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(250))? {
